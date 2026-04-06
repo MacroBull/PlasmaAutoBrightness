@@ -10663,4 +10663,1171 @@ $ cat ~/.config/gh/hosts.yml 2>/dev/null | grep -A3 "github.com" | head -5
 
 ---
 
+<sub>⏱️ 1160m 51s</sub>
+
+### 👤 User
+
+我突然想起来，我的外置显示器支持DDC/CI,帮我看看能不能调节它的亮度
+
+---
+
+<sub>⏱️ 1160m 58s</sub>
+
+### 💭 Reasoning
+
+*The user wants to check if they can control their external monitor's brightness via DDC/CI. Let me check if ddcutil is installed and if their monitor is detectable.*
+
+---
+
+<sub>⏱️ 1161m 0s</sub>
+
+### ✅ `bash`
+
+**Check ddcutil and detect monitors**
+
+$ which ddcutil 2>/dev/null || echo "not found"; ddcutil detect 2>&1 | head -30
+
+```
+not found
+bash: ddcutil: command not found
+<exited with exit code 0>
+```
+
+
+---
+
+<sub>⏱️ 1161m 6s</sub>
+
+### ✅ `bash`
+
+**Check ddcutil availability in apt**
+
+$ apt-cache show ddcutil 2>/dev/null | grep -E "^(Package|Version|Description)" | head -5
+
+```
+Package: ddcutil
+Version: 1.4.1-1build2
+Description-en: Control monitor settings - Standalone command line application
+Description-md5: 4edd4b04df8fc05f6e606ecac2414dec
+<exited with exit code 0>
+```
+
+
+---
+
+<sub>⏱️ 1161m 9s</sub>
+
+### 💬 Copilot
+
+`ddcutil` 1.4.1 在 apt 里有，安装并检测：
+
+```bash
+sudo apt install ddcutil
+
+# 检测外接显示器
+ddcutil detect
+
+# 如果检测到，查看它支持哪些控制项（包括亮度 VCP 0x10）
+ddcutil capabilities
+
+# 读取当前亮度
+ddcutil getvcp 10
+
+# 设置亮度（0-100）
+ddcutil setvcp 10 60
+```
+
+如果 `detect` 报权限错误，需要把自己加入 `i2c` 组：
+
+```bash
+sudo usermod -aG i2c $USER
+# 重新登录后生效，或临时：
+sudo chmod a+rw /dev/i2c-*
+```
+
+---
+
+装好后告诉我结果。如果 `detect` 能看到显示器，我可以把 DDC/CI 支持加进 plasmoid——双显示器分别控制，内屏走 PowerDevil，外屏走 `ddcutil`。
+
+---
+
+<sub>⏱️ 1164m 43s</sub>
+
+### 👤 User
+
+可以setvcp了
+
+---
+
+<sub>⏱️ 1164m 49s</sub>
+
+### 💭 Reasoning
+
+*The user confirmed they can use `ddcutil setvcp 10` to control their external monitor brightness. Now they probably want me to integrate DDC/CI support into the plasmoid. Let me check the ddcutil details first - which display number, etc.*
+
+---
+
+<sub>⏱️ 1164m 50s</sub>
+
+### 💬 Copilot
+
+好，先摸清底细：
+
+---
+
+<sub>⏱️ 1164m 54s</sub>
+
+### ✅ `bash`
+
+**Get monitor info and current brightness**
+
+$ ddcutil detect 2>&1 && echo "---" && ddcutil getvcp 10 2>&1
+
+<details>
+<summary>26 lines</summary>
+
+```
+Invalid display
+   I2C bus:  /dev/i2c-13
+   DRM connector:           card2-eDP-1
+   EDID synopsis:
+      Mfg id:               SDC - UNK
+      Model:
+      Product code:         16768  (0x4180)
+      Serial number:
+      Binary serial number: 0 (0x00000000)
+      Manufacture year:     2021,  Week: 27
+   DDC communication failed
+   This is an eDP laptop display. Laptop displays do not support DDC/CI.
+
+Display 1
+   I2C bus:  /dev/i2c-15
+   DRM connector:           card2-DP-2
+   EDID synopsis:
+      Mfg id:               AOC - UNK
+      Model:                U2777B
+      Product code:         10103  (0x2777)
+      Serial number:
+      Binary serial number: 1154 (0x00000482)
+      Manufacture year:     2019,  Week: 32
+   VCP version:         2.2
+
+---
+VCP code 0x10 (Brightness                    ): current value =    90, max value =   100
+<exited with exit code 0>
+```
+
+</details>
+
+
+---
+
+<sub>⏱️ 1164m 57s</sub>
+
+### 💬 Copilot
+
+清楚了：AOC U2777B，Display 1，当前亮度 90/100。
+
+现在要考虑架构：plasmoid 是纯 QML，没法直接调 `ddcutil`。方案有两个：
+
+---
+
+<sub>⏱️ 1167m 15s</sub>
+
+### ✅ `ask_user`
+
+**外屏亮度控制的集成方案，你倾向哪种？**
+
+<details>
+<summary>Arguments</summary>
+
+```json
+{
+  "choices": [
+    "用 KDE KRunner / PlasmaCore.DataSource 跑 shell 脚本包装 ddcutil（纯 QML，稍有延迟）",
+    "写一个小的 D-Bus 服务（Python/systemd）让 plasmoid 像调 PowerDevil 一样调外屏"
+  ],
+  "question": "外屏亮度控制的集成方案，你倾向哪种？"
+}
+```
+
+</details>
+
+```
+User responded: 调研一下DDC/CI的dbus服务，现成的/开源的
+```
+
+
+---
+
+<sub>⏱️ 1167m 21s</sub>
+
+### ✅ `bash`
+
+**Check ddcutil version and related packages**
+
+$ ddcutil --version 2>&1 | head -3 && apt-cache search ddcutil 2>/dev/null && dpkg -l | grep -i "ddcutil\|ddcci\|brightness" | head -10
+
+<details>
+<summary>10 lines</summary>
+
+```
+ddcutil 1.4.1
+Built with support for USB connected displays.
+Built without function failure simulation.
+ddcui - GUI for ddcutil
+ddcutil - Control monitor settings - Standalone command line application
+libddcutil-dev - Control monitor settings - development files
+libddcutil4 - Control monitor settings - shared library
+ii  brightnessctl                                            0.5.1-3.1                                   amd64        Control backlight brightness
+ii  ddcutil                                                  1.4.1-1build2                               amd64        Control monitor settings - Standalone command line application
+<exited with exit code 0>
+```
+
+</details>
+
+
+---
+
+<sub>⏱️ 1167m 44s</sub>
+
+### ✅ `web_search`
+
+**ddcutil D-Bus service interface for monitor brightness control 2023 2024**
+
+<details>
+<summary>Arguments</summary>
+
+```json
+{
+  "query": "ddcutil D-Bus service interface for monitor brightness control 2023 2024"
+}
+```
+
+</details>
+
+```
+{"type":"text","text":{"value":"The `ddcutil` tool is a widely used utility for managing monitor settings, including brightness, via the DDC/CI protocol on Linux systems. It can be operated via the command line, through its C API/libddcutil shared library, and with certain GUI and D-Bus wrappers in various desktop environments.\n\n### D-Bus Service Interface for ddcutil (2023–2024)\n\n**Purpose:**  \nA D-Bus service interface allows system and user applications to programmatically interact with external monitors for tasks like brightness adjustment without using raw ddcutil commands. This is particularly useful for integrating with desktop environments and automation tools.\n\n#### Key Points:\n\n1. **Official Support and Implementations:**\n   - ddcutil's mainline project is primarily command-line and library-based, but there is an ecosystem of D-Bus wrappers and related services for tighter desktop integration.\n   - There is mention of `ddcutil-service`, a D-Bus wrapper for libddcutil, developed to allow programs (like the openSUSE tool `vdu_controls`) to send monitor control requests through D-Bus instead of running shell commands directly. This enhances security and automation by not requiring root privileges per operation【3:8†source】.\n\n2. **Practical Usage with GNOME and KDE:**\n   - GNOME-based distributions often use ddcutil via GNOME shell extensions that wrap command-line usage, and some offer D-Bus integration to allow extensions or programs to communicate seamlessly with ddcutil.\n   - KDE’s PowerDevil and settings managers also rely on libddcutil, incorporating D-Bus interfaces for improved permission handling and notification of display connect/disconnect events as of 2023–2024【3:1†source】.\n\n3. **Third-Party and Community Solutions:**\n   - Community projects, such as `ddcutil-service`, are specifically written as D-Bus daemons to be used by display utilities. If installed, supported GUI tools and scripts detect and use them for brightness and other monitor controls【3:8†source】.\n   - Documentation and open-source discussions show that these D-Bus wrappers are most often found in openSUSE, Fedora, and related packaging systems rather than as part of the core ddcutil package’s upstream releases.\n\n4. **Typical Setup:**\n   - Install ddcutil, and (when available), install a D-Bus wrapper or a desktop extension that uses it.\n   - D-Bus services avoid the need for running brightness commands as root by handling permissions via group membership or by running a privileged helper process.\n   - The underlying commands sent over D-Bus typically mirror ddcutil’s CLI options, e.g., `setvcp 10 <value>` for brightness, using VCP (Virtual Control Panel) codes【3:3†source】【3:7†source】.\n\n5. **Current State (2023–2024):**\n   - There is **no universal D-Bus standard interface** built into core ddcutil, but several distros and utilities (such as vdu_controls and some GNOME extensions) provide their own D-Bus services as wrappers around libddcutil.\n   - These community solutions often track ddcutil’s updates and remain compatible with recent hardware and desktop environments.\n\n### References & Further Reading\n- [ddcutil main project on GitHub](https://github.com/rockowitz/ddcutil) – for source code, API documentation, and latest changelogs【3:0†source】【3:1†source】\n- [openSUSE vdu_controls and ddcutil-service discussion](https://forums.opensuse.org/t/desktop-control-of-external-monitor-settings-with-ddcutil-and-vdu-controls/147498?page=2) – D-Bus daemon wrapper details【3:8†source】\n- [Straightforward ddcutil usage for brightness](https://commandmasters.com/commands/ddcutil-linux/) – for example ddcutil commands and adaptation in scripts/extensions【3:3†source】\n- [Community guide for DDC control integration in NixOS, including permissions and service examples](https://discourse.nixos.org/t/how-to-enable-ddc-brightness-control-i2c-permissions/20800)【3:6†source】\n\n### Summary\n\nIf you need a D-Bus service interface for monitor brightness with ddcutil in 2023–2024, check for packages like `ddcutil-service` or relevant GNOME/KDE extensions on your platform. Otherwise, libddcutil provides API-level access which can be wrapped in a custom D-Bus service suited for your needs. For broader adoption, keep an eye on desktop environment integrations and community-driven tools that extend ddcutil functionality via D-Bus.","annotations":[{"text":"【3:8†source】","start_index":1204,"end_index":1216,"url_citation":{"title":"Desktop control of external monitor settings with ddcutil and vdu ...","url":"https://forums.opensuse.org/t/desktop-control-of-external-monitor-settings-with-ddcutil-and-vdu-controls/147498?page=2"}},{"text":"【3:1†source】","start_index":1675,"end_index":1687,"url_citation":{"title":"ddcutil Documentation","url":"https://www.ddcutil.com/"}},{"text":"【3:8†source】","start_index":1968,"end_index":1980,"url_citation":{"title":"Desktop control of external monitor settings with ddcutil and vdu ...","url":"https://forums.opensuse.org/t/desktop-control-of-external-monitor-settings-with-ddcutil-and-vdu-controls/147498?page=2"}},{"text":"【3:3†source】","start_index":2658,"end_index":2670,"url_citation":{"title":"How to Control Display Settings Using ddcutil (with examples)","url":"https://commandmasters.com/commands/ddcutil-linux/"}},{"text":"【3:7†source】","start_index":2670,"end_index":2682,"url_citation":{"title":"Use ddcutil to control external monitor - 止于至善","url":"https://jihuan-tian.github.io/computer/2023/03/02/use-ddcutil-to-control-external-monitor.html"}},{"text":"【3:0†source】","start_index":3243,"end_index":3255,"url_citation":{"title":"Control monitor settings using DDC/CI and USB - GitHub","url":"https://github.com/rockowitz/ddcutil"}},{"text":"【3:1†source】","start_index":3255,"end_index":3267,"url_citation":{"title":"ddcutil Documentation","url":"https://www.ddcutil.com/"}},{"text":"【3:8†source】","start_index":3475,"end_index":3487,"url_citation":{"title":"Desktop control of external monitor settings with ddcutil and vdu ...","url":"https://forums.opensuse.org/t/desktop-control-of-external-monitor-settings-with-ddcutil-and-vdu-controls/147498?page=2"}},{"text":"【3:3†source】","start_index":3656,"end_index":3668,"url_citation":{"title":"How to Control Display Settings Using ddcutil (with examples)","url":"https://commandmasters.com/commands/ddcutil-linux/"}},{"text":"【3:6†source】","start_index":3859,"end_index":3871,"url_citation":{"title":"How to enable ddc brightness control? (i2c permissions)","url":"https://discourse.nixos.org/t/how-to-enable-ddc-brightness-control-i2c-permissions/20800"}}]},"bing_searches":[{"text":"ddcutil D-Bus service interface for monitor brightness control 2023 2024","url":"https://www.bing.com/search?q=ddcutil+D-Bus+service+interface+for+monitor+brightness+control+2023+2024"}],"annotations":null}
+```
+
+
+---
+
+<sub>⏱️ 1168m 7s</sub>
+
+### ✅ `web_search`
+
+**ddcutil-service D-Bus interface setvcp API github rockowitz**
+
+<details>
+<summary>Arguments</summary>
+
+```json
+{
+  "query": "ddcutil-service D-Bus interface setvcp API github rockowitz"
+}
+```
+
+</details>
+
+````
+{"type":"text","text":{"value":"Here is an overview and sample usage for the D-Bus interface and the setvcp API of the ddcutil-service project, with close connection to the main ddcutil project by @rockowitz:\n\n### ddcutil-service and Its D-Bus Interface\n\n- **ddcutil-service** is a D-Bus wrapper for the libddcutil C library, which implements the VESA DDC Monitor Control Command Set (MCCS). It provides a convenient way to control display settings (like brightness, contrast, input source, and more) using the Virtual Control Panel (VCP) codes, via D-Bus instead of direct command-line calls【3:0†GitHub - digitaltrails/ddcutil-service: A Dbus ddcutil server for ...†https://github.com/digitaltrails/ddcutil-service】.\n\n#### Example Service Interface\n\n- The service exposes its interface on the session bus:\n  - **Service name:** `com.ddcutil.DdcutilService`\n  - **Object path:** `/com/ddcutil/DdcutilObject`\n  - **Interface:** `com.ddcutil.DdcutilInterface`\n- To control the display, clients can use the `SetVcp` method (for setting values) and `GetVcp` (for reading).\n\n#### SetVcp API Example\n\nTo set a VCP code (e.g., change brightness), you could use the following command-line call via `busctl`:\n\n```\nSERVICE='com.ddcutil.DdcutilService'\nOBJECT='/com/ddcutil/DdcutilObject'\nINTERFACE='com.ddcutil.DdcutilInterface'\n\nbusctl --user call $SERVICE $OBJECT $INTERFACE SetVcp isyqu 1 \"\" 16 50 0\n```\n\n- Here, `16` (decimal) is the VCP code for brightness; `50` is the new value.\n- The method signature and parameter types might vary; consult the built-in service help for details (see below).\n\n#### Getting Interface Details\n\n- Run `ddcutil-service --introspect` for full details on the available methods and parameter types.\n- You can also use tools like [d-feet](https://wiki.gnome.org/Apps/DFeet) to visually inspect the D-Bus interface in real time, making it easier to experiment with commands【3:9†ddcutil-service (1) — ddcutil-service - manpages.opensuse.org†https://manpages.opensuse.org/Tumbleweed/ddcutil-service/ddcutil-service.1.en.html】.\n\n#### Implementation and Dependencies\n\n- The service is written in C, with minimal dependencies (`glib-2`, `libddcutil`) and designed for easy integration into custom desktop widgets or automation scripts.\n- The relationship to the main ddcutil project (@rockowitz) is direct: ddcutil-service wraps libddcutil and provides programmatic/IPC access to the powerful core used in the command-line tool【3:2†GitHub - rockowitz/ddcutil: Control monitor settings using DDC/CI and ...†https://github.com/rockowitz/ddcutil】【3:3†ddcutil-service/README.md at master - GitHub†https://github.com/digitaltrails/ddcutil-service/blob/master/README.md】.\n\n#### Usage Tips\n\n- Excessive writes to VCP codes (like brightness) can wear out the monitor’s NVRAM; limit rapid or repetitive updates.\n- If you encounter permission issues, adjust your user's access to `/dev/i2c-*` devices or consult the ddcutil documentation for udev rules.\n\n---\n\n### References and Further Reading\n- [digitaltrails/ddcutil-service on GitHub](https://github.com/digitaltrails/ddcutil-service) (for source and examples)【3:0†source】\n- [\"SetVcp\" usage and interface examples in ddcutil-service README](https://github.com/digitaltrails/ddcutil-service/blob/master/README.md)【3:3†source】\n- [rockowitz/ddcutil on GitHub](https://github.com/rockowitz/ddcutil) (the underlying library, full documentation)【3:2†source】\n- [Official ddcutil documentation](https://www.ddcutil.com/)【3:1†source】\n- [manpages and D-Bus tips](https://manpages.opensuse.org/Tumbleweed/ddcutil-service/ddcutil-service.1.en.html)【3:9†source】\n\nIf you need a Python or Bash client example for using the D-Bus interface, or have questions about specific VCP codes (like input switching), let me know!","annotations":[{"text":"【3:0†GitHub - digitaltrails/ddcutil-service: A Dbus ddcutil server for ...†https://github.com/digitaltrails/ddcutil-service】","start_index":560,"end_index":684,"url_citation":{"title":"GitHub - digitaltrails/ddcutil-service: A Dbus ddcutil server for ...","url":"https://github.com/digitaltrails/ddcutil-service"}},{"text":"【3:9†ddcutil-service (1) — ddcutil-service - manpages.opensuse.org†https://manpages.opensuse.org/Tumbleweed/ddcutil-service/ddcutil-service.1.en.html】","start_index":1863,"end_index":2013,"url_citation":{"title":"ddcutil-service (1) — ddcutil-service - manpages.opensuse.org","url":"https://manpages.opensuse.org/Tumbleweed/ddcutil-service/ddcutil-service.1.en.html"}},{"text":"【3:2†GitHub - rockowitz/ddcutil: Control monitor settings using DDC/CI and ...†https://github.com/rockowitz/ddcutil】","start_index":2412,"end_index":2528,"url_citation":{"title":"GitHub - rockowitz/ddcutil: Control monitor settings using DDC/CI and ...","url":"https://github.com/rockowitz/ddcutil"}},{"text":"【3:3†ddcutil-service/README.md at master - GitHub†https://github.com/digitaltrails/ddcutil-service/blob/master/README.md】","start_index":2528,"end_index":2649,"url_citation":{"title":"ddcutil-service/README.md at master - GitHub","url":"https://github.com/digitaltrails/ddcutil-service/blob/master/README.md"}},{"text":"【3:0†source】","start_index":3089,"end_index":3101,"url_citation":{"title":"GitHub - digitaltrails/ddcutil-service: A Dbus ddcutil server for ...","url":"https://github.com/digitaltrails/ddcutil-service"}},{"text":"【3:3†source】","start_index":3241,"end_index":3253,"url_citation":{"title":"ddcutil-service/README.md at master - GitHub","url":"https://github.com/digitaltrails/ddcutil-service/blob/master/README.md"}},{"text":"【3:2†source】","start_index":3368,"end_index":3380,"url_citation":{"title":"GitHub - rockowitz/ddcutil: Control monitor settings using DDC/CI and ...","url":"https://github.com/rockowitz/ddcutil"}},{"text":"【3:1†source】","start_index":3441,"end_index":3453,"url_citation":{"title":"ddcutil Documentation","url":"https://www.ddcutil.com/"}},{"text":"【3:9†source】","start_index":3565,"end_index":3577,"url_citation":{"title":"ddcutil-service (1) — ddcutil-service - manpages.opensuse.org","url":"https://manpages.opensuse.org/Tumbleweed/ddcutil-service/ddcutil-service.1.en.html"}}]},"bing_searches":[{"text":"ddcutil-service D-Bus interface setvcp API github rockowitz","url":"https://www.bing.com/search?q=ddcutil-service+D-Bus+interface+setvcp+API+github+rockowitz"}],"annotations":null}
+````
+
+
+---
+
+<sub>⏱️ 1168m 11s</sub>
+
+### 💬 Copilot
+
+调研结论：
+
+**现成方案：[`ddcutil-service`](https://github.com/digitaltrails/ddcutil-service)**
+- D-Bus session bus 服务（`com.ddcutil.DdcutilService`），Python 写的
+- 暴露 `SetVcp` / `GetVcp` 方法，QML 里用 `PlasmaCore.DataSource` 或直接 `Connections` 调 D-Bus 即可
+- 但 Ubuntu Noble 没打包，需要手动安装
+
+**也可以不用它**，直接在 QML 里用 `PlasmaCore.Executable`（`kdeconnect` 风格）跑 `ddcutil setvcp 10 \<value\>`。对亮度控制这种低频操作完全够用，不需要守护进程。
+
+---
+
+**建议方案：**
+
+- **短期**：`PlasmaCore.Executable` 直接 shell 出去调 `ddcutil`，简单可靠
+- **长期**：若想跨多外屏管理，再引入 `ddcutil-service`
+
+要集成到 plasmoid 吗？需要考虑几个设计问题：
+1. 是只控外屏，还是内屏+外屏联动（或各自独立）？
+2. 外屏亮度范围 0–100（物理绝对值），和内屏的 PowerDevil 百分比语义不同，怎么统一？
+
+---
+
+<sub>⏱️ 1169m 25s</sub>
+
+### 👤 User
+
+先 executable 吧，做独立的多个bias
+
+---
+
+<sub>⏱️ 1169m 31s</sub>
+
+### 💭 Reasoning
+
+*The user wants to:
+1. Use `PlasmaCore.Executable` to call `ddcutil setvcp 10 \<value\>` for external monitor brightness control
+2. Have independent bias controls for each display (internal + external monitors)
+
+Let me think about the architecture:
+- Internal display: PowerDevil D-Bus (percentage 0-100)
+- External display: ddcutil setvcp 10 (value 0-100, physical absolute)
+- Each display gets its own bias slider
+
+Let me look at the current code structure first, then plan the changes.
+
+
+Now I'm mapping out the implementation: the brightness pipeline stays the same, but I'll apply the lux curve independently to each display with separate bias values. The internal display keeps using PowerDevil with the existing `cfg.userBias`, while the external monitor gets a new `cfg.externalBias` config entry and a separate `_applyExternal` method that shells out to ddcutil. I'll also need to add an `externalEnabled` toggle to the config.
+
+For the UI, I should add sliders for both the internal and external display biases in the FullRepresentation, and let the presets control both values independently since the user wants truly separate bias controls for each display.
+
+Setting up the config entries... For the ddcutil value, there's no conversion needed since ddcutil uses 0-100 for VCP 0x10, matching the percentage directly. For executing shell commands in Plasma 5, I can use the executable DataSource engine with a callback approach, or for fire-and-forget commands, I'll need to handle it differently.
+
+Now I'm planning the UI layout for Section 2 - I'll add separate bias sliders for the internal display and external display (AOC U2777B, shown conditionally), plus a shared range slider for both.
+
+Since we can't reliably detect the external display at QML runtime without a slow ddcutil call, I'll just show the external controls when `externalBiasEnabled` is toggled in the config. I need to update the config file to add `externalEnabled`, `externalBias`, and `externalDisplayNum` properties, then modify the main QML to set up a DataSource for executing ddcutil commands, compute the target percent for the external display using its own gamma curve, and wire up the apply function.
+
+For the UI, I'll add an external bias slider in the second section of FullRepresentation when enabled, and update configGeneral to include the toggle and display number input. The tricky part is that `_tToPercent` currently uses `cfg.userBias` internally, so I need to refactor it to accept bias as a parameter instead.
+
+Refactoring the percent calculation... I'm realizing that adding an optional bias parameter to `_tToPercent` is the cleanest solution—it keeps the public API stable while letting me pass different bias values where needed.
+
+Now I need to create a new `externalTargetPercent` property that mirrors `targetPercent` but uses the external bias instead, and wire up the connection handlers to trigger `forceApplyExternal` when either the external bias or enabled state changes.
+
+Writing the implementation...*
+
+---
+
+<sub>⏱️ 1170m 9s</sub>
+
+### ✅ `view`
+
+**view the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/config/main.xml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/config/main.xml
+
+<details>
+<summary>38 lines</summary>
+
+```
+1. <?xml version="1.0" encoding="UTF-8"?>
+2. <kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+3.       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+4.       xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+5.                           http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+6.   <kcfgfile name=""/>
+7.   <group name="General">
+8.     <!-- Whether auto brightness is active -->
+9.     <entry name="enabled" type="Bool">
+10.       <default>true</default>
+11.     </entry>
+12.     <!-- Minimum brightness % applied at luxMin and below -->
+13.     <entry name="minBrightness" type="Int">
+14.       <default>5</default>
+15.     </entry>
+16.     <!-- Maximum brightness % applied at luxMax and above -->
+17.     <entry name="maxBrightness" type="Int">
+18.       <default>100</default>
+19.     </entry>
+20.     <!-- Lux value mapped to minBrightness (log scale lower bound) -->
+21.     <entry name="luxMin" type="Double">
+22.       <default>5.0</default>
+23.     </entry>
+24.     <!-- Lux value mapped to maxBrightness (log scale upper bound) -->
+25.     <entry name="luxMax" type="Double">
+26.       <default>5000.0</default>
+27.     </entry>
+28.     <!-- EMA smoothing factor * 100 (5=slow, 50=fast) -->
+29.     <entry name="smoothing" type="Int">
+30.       <default>15</default>
+31.     </entry>
+32.     <!-- User bias: 0=lock-dim, 50=no-bias(auto), 100=lock-bright -->
+33.     <entry name="userBias" type="Int">
+34.       <default>50</default>
+35.     </entry>
+36.   </group>
+37. </kcfg>
+38.
+```
+
+</details>
+
+
+---
+
+<sub>⏱️ 1170m 9s</sub>
+
+### ✅ `view`
+
+**view the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/FullRepresentation.qml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/FullRepresentation.qml
+
+<details>
+<summary>411 lines</summary>
+
+```
+1. import QtQuick 2.15
+2. import QtQuick.Layouts 1.15
+3. import QtQuick.Controls 2.15 as QQC2
+4. import org.kde.plasma.plasmoid 2.0
+5. import org.kde.plasma.core 2.0 as PlasmaCore
+6. import org.kde.plasma.components 3.0 as PC3
+7. import org.kde.kirigami 2.20 as Kirigami
+8.
+9. ColumnLayout {
+10.     id: fullRep
+11.
+12.     Layout.minimumWidth: Kirigami.Units.gridUnit * 18
+13.     Layout.minimumHeight: implicitHeight
+14.     spacing: Kirigami.Units.largeSpacing
+15.
+16.     // ── Section 1: Info ─────────────────────────────────────────────────────
+17.
+18.     // Header: icon + name + enable switch
+19.     RowLayout {
+20.         Layout.fillWidth: true
+21.         spacing: Kirigami.Units.smallSpacing
+22.
+23.         Kirigami.Icon {
+24.             source: "video-display-brightness"
+25.             Layout.preferredWidth:  Kirigami.Units.iconSizes.medium
+26.             Layout.preferredHeight: Kirigami.Units.iconSizes.medium
+27.         }
+28.         PC3.Label {
+29.             text: "Auto Brightness"
+30.             font.bold: true
+31.             Layout.fillWidth: true
+32.         }
+33.         PC3.Switch {
+34.             checked: plasmoid.configuration.enabled
+35.             onToggled: plasmoid.configuration.enabled = checked
+36.         }
+37.     }
+38.
+39.     // Status rows: label | value text | inline bar  (3-col GridLayout)
+40.     GridLayout {
+41.         id: infoGrid
+42.         columns: 3
+43.         Layout.fillWidth: true
+44.         columnSpacing: Kirigami.Units.smallSpacing
+45.         rowSpacing: Kirigami.Units.smallSpacing / 2
+46.
+47.         opacity: plasmoid.configuration.enabled ? 1.0 : 0.4
+48.         Behavior on opacity { NumberAnimation { duration: 200 } }
+49.
+50.         // Row 1: Ambient lux
+51.         PC3.Label {
+52.             text: "Ambient"
+53.             color: Kirigami.Theme.disabledTextColor
+54.             font.pointSize: Kirigami.Theme.smallFont.pointSize
+55.         }
+56.         PC3.Label {
+57.             text: root.sensorAvailable
+58.                       ? "%1 lux  (EMA %2)".arg(root.currentLux.toFixed(0))
+59.                                           .arg(root.emaLux >= 0 ? root.emaLux.toFixed(0) : "—")
+60.                       : "No sensor"
+61.             font.family: "monospace"
+62.             font.pointSize: Kirigami.Theme.smallFont.pointSize
+63.             Layout.minimumWidth: Kirigami.Units.gridUnit * 8
+64.         }
+65.         QQC2.ProgressBar {
+66.             Layout.fillWidth: true
+67.             implicitHeight: Kirigami.Units.smallSpacing * 2
+68.             from: 0; to: 1
+69.             value: root.luxLogPos
+70.             Behavior on value { NumberAnimation { duration: 400 } }
+71.         }
+72.
+73.         // Row 2: Screen brightness
+74.         PC3.Label {
+75.             text: "Brightness"
+76.             color: Kirigami.Theme.disabledTextColor
+77.             font.pointSize: Kirigami.Theme.smallFont.pointSize
+78.         }
+79.         PC3.Label {
+80.             text: root.maxRaw > 0
+81.                       ? "%1%  (→ %2%)".arg(Math.round(root.currentBrightness / root.maxRaw * 100))
+82.                                       .arg(Math.round(root.targetPercent))
+83.                       : "—"
+84.             font.family: "monospace"
+85.             font.pointSize: Kirigami.Theme.smallFont.pointSize
+86.             Layout.minimumWidth: Kirigami.Units.gridUnit * 8
+87.         }
+88.         QQC2.ProgressBar {
+89.             Layout.fillWidth: true
+90.             implicitHeight: Kirigami.Units.smallSpacing * 2
+91.             from: 0; to: 100
+92.             value: root.targetPercent
+93.             Behavior on value { NumberAnimation { duration: 400 } }
+94.         }
+95.     }
+96.
+97.     // ── Curve chart ──────────────────────────────────────────────────────────
+98.     // Shows the lux→brightness mapping curve (log X, linear Y).
+99.     // Green dot = current position.
+100.     Item {
+101.         id: chartArea
+102.         Layout.fillWidth: true
+103.         Layout.preferredHeight: Kirigami.Units.gridUnit * 5
+104.         opacity: plasmoid.configuration.enabled ? 1.0 : 0.35
+105.         Behavior on opacity { NumberAnimation { duration: 200 } }
+106.
+107.         // Axis labels (bottom-left: luxMin, bottom-right: luxMax)
+108.         PC3.Label {
+109.             anchors { left: parent.left; bottom: parent.bottom }
+110.             text: plasmoid.configuration
+111.                       ? (plasmoid.configuration.luxMin < 1000
+112.                              ? plasmoid.configuration.luxMin + " lx"
+113.                              : (plasmoid.configuration.luxMin / 1000).toFixed(0) + "k lx")
+114.                       : ""
+115.             font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.85
+116.             color: Kirigami.Theme.disabledTextColor
+117.         }
+118.         PC3.Label {
+119.             anchors { right: parent.right; bottom: parent.bottom }
+120.             text: plasmoid.configuration
+121.                       ? (plasmoid.configuration.luxMax < 1000
+122.                              ? plasmoid.configuration.luxMax + " lx"
+123.                              : (plasmoid.configuration.luxMax / 1000).toFixed(0) + "k lx")
+124.                       : ""
+125.             font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.85
+126.             color: Kirigami.Theme.disabledTextColor
+127.         }
+128.         // Y labels
+129.         PC3.Label {
+130.             anchors { left: parent.left; top: parent.top }
+131.             text: plasmoid.configuration ? plasmoid.configuration.maxBrightness + "%" : ""
+132.             font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.85
+133.             color: Kirigami.Theme.disabledTextColor
+134.         }
+135.         PC3.Label {
+136.             anchors { left: parent.left; bottom: parent.bottom; bottomMargin: Kirigami.Units.gridUnit }
+137.             text: plasmoid.configuration ? plasmoid.configuration.minBrightness + "%" : ""
+138.             font.pointSize: Kirigami.Theme.smallFont.pointSize * 0.85
+139.             color: Kirigami.Theme.disabledTextColor
+140.         }
+141.
+142.         // Margin so the curve doesn't overlap axis labels
+143.         readonly property int marginLeft:  Kirigami.Units.gridUnit * 2
+144.         readonly property int marginRight: Kirigami.Units.gridUnit * 2
+145.         readonly property int marginTop:   Kirigami.Units.smallSpacing
+146.         readonly property int marginBot:   Kirigami.Units.gridUnit
+147.
+148.         Canvas {
+149.             id: curveCanvas
+150.             anchors.fill: parent
+151.
+152.             // Redrawn when config changes or size changes
+153.             onWidthChanged:  requestPaint()
+154.             onHeightChanged: requestPaint()
+155.
+156.             Connections {
+157.                 target: plasmoid.configuration
+158.                 function onUserBiasChanged()      { curveCanvas.requestPaint() }
+159.                 function onMinBrightnessChanged() { curveCanvas.requestPaint() }
+160.                 function onMaxBrightnessChanged() { curveCanvas.requestPaint() }
+161.                 function onLuxMinChanged()        { curveCanvas.requestPaint() }
+162.                 function onLuxMaxChanged()        { curveCanvas.requestPaint() }
+163.             }
+164.
+165.             onPaint: {
+166.                 var ctx = getContext("2d")
+167.                 ctx.clearRect(0, 0, width, height)
+168.                 if (!plasmoid.configuration || width < 10 || height < 10) return
+169.
+170.                 var ml = chartArea.marginLeft
+171.                 var mr = chartArea.marginRight
+172.                 var mt = chartArea.marginTop
+173.                 var mb = chartArea.marginBot
+174.                 var cw = width  - ml - mr   // drawable width [px]
+175.                 var ch = height - mt - mb   // drawable height [px]
+176.
+177.                 // Subtle background
+178.                 ctx.fillStyle = Qt.rgba(
+179.                     Kirigami.Theme.backgroundColor.r,
+180.                     Kirigami.Theme.backgroundColor.g,
+181.                     Kirigami.Theme.backgroundColor.b, 0.3)
+182.                 ctx.fillRect(ml, mt, cw, ch)
+183.
+184.                 // Grid lines at 25/50/75%
+185.                 ctx.strokeStyle = Qt.rgba(
+186.                     Kirigami.Theme.textColor.r,
+187.                     Kirigami.Theme.textColor.g,
+188.                     Kirigami.Theme.textColor.b, 0.08)
+189.                 ctx.lineWidth = 1
+190.                 ;[0.25, 0.5, 0.75].forEach(function(f) {
+191.                     var y = mt + ch * (1 - f)
+192.                     ctx.beginPath(); ctx.moveTo(ml, y); ctx.lineTo(ml + cw, y); ctx.stroke()
+193.                 })
+194.
+195.                 // Build curve points (N=60): t is the x-position ratio,
+196.                 var N = 60
+197.                 var pts = []
+198.                 for (var i = 0; i <= N; i++) {
+199.                     var t  = i / N                            // [ratio 0..1]
+200.                     var br = root._tToPercent(t) / 100  // [ratio 0..1]
+201.                     pts.push({ x: ml + t * cw, y: mt + ch * (1 - br) })
+202.                 }
+203.
+204.                 // Fill under curve
+205.                 ctx.beginPath()
+206.                 ctx.moveTo(pts[0].x, pts[0].y)
+207.                 for (var j = 1; j < pts.length; j++)
+208.                     ctx.lineTo(pts[j].x, pts[j].y)
+209.                 ctx.lineTo(ml + cw, mt + ch)
+210.                 ctx.lineTo(ml,      mt + ch)
+211.                 ctx.closePath()
+212.                 ctx.fillStyle = Qt.rgba(
+213.                     Kirigami.Theme.highlightColor.r,
+214.                     Kirigami.Theme.highlightColor.g,
+215.                     Kirigami.Theme.highlightColor.b, 0.15)
+216.                 ctx.fill()
+217.
+218.                 // Curve line
+219.                 ctx.beginPath()
+220.                 ctx.moveTo(pts[0].x, pts[0].y)
+221.                 for (var k = 1; k < pts.length; k++)
+222.                     ctx.lineTo(pts[k].x, pts[k].y)
+223.                 ctx.strokeStyle = Qt.rgba(
+224.                     Kirigami.Theme.highlightColor.r,
+225.                     Kirigami.Theme.highlightColor.g,
+226.                     Kirigami.Theme.highlightColor.b, 0.9)
+227.                 ctx.lineWidth = 1.5
+228.                 ctx.lineJoin = "round"
+229.                 ctx.stroke()
+230.             }
+231.         }
+232.
+233.         // Current-position dot (animated)
+234.         Rectangle {
+235.             id: posDot
+236.             width: 8; height: 8; radius: 4
+237.             color: Kirigami.Theme.positiveTextColor
+238.             border.color: Kirigami.Theme.backgroundColor
+239.             border.width: 1.5
+240.             visible: root.emaLux > 0 && plasmoid.configuration
+241.
+242.             x: chartArea.marginLeft
+243.                + root.luxLogPos * (chartArea.width - chartArea.marginLeft - chartArea.marginRight)
+244.                - width / 2
+245.             y: chartArea.marginTop
+246.                + (chartArea.height - chartArea.marginTop - chartArea.marginBot) * (1 - root.targetPercent / 100)
+247.                - height / 2
+248.             Behavior on x { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
+249.             Behavior on y { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
+250.         }
+251.     }
+252.
+253.     Kirigami.Separator { Layout.fillWidth: true }
+254.
+255.     // ── Section 2: Controls ─────────────────────────────────────────────────
+256.
+257.     // Bias slider
+258.     ColumnLayout {
+259.         Layout.fillWidth: true
+260.         spacing: 2
+261.
+262.         RowLayout {
+263.             Layout.fillWidth: true
+264.
+265.             PC3.Label {
+266.                 text: "Brightness bias"
+267.                 font.bold: true
+268.                 Layout.fillWidth: true
+269.             }
+270.
+271.             PC3.Label {
+272.                 text: plasmoid.configuration.userBias === 50
+273.                     ? "Neutral"
+274.                     : (plasmoid.configuration.userBias > 50 ? "+" : "") +
+275.                       (plasmoid.configuration.userBias - 50) + "%"
+276.                 font.pointSize: Kirigami.Theme.smallFont.pointSize
+277.                 font.family: "monospace"
+278.             }
+279.         }
+280.
+281.         QQC2.Slider {
+282.             id: biasSlider
+283.             Layout.fillWidth: true
+284.             implicitHeight: Kirigami.Units.gridUnit * 1.5
+285.             from: 0; to: 100; stepSize: 1
+286.             value: plasmoid.configuration.userBias
+287.             onMoved: plasmoid.configuration.userBias = Math.round(value)
+288.         }
+289.
+290.         RowLayout {
+291.             Layout.fillWidth: true
+292.             PC3.Label {
+293.                 text: "Dim"
+294.                 font.pointSize: Kirigami.Theme.smallFont.pointSize
+295.                 color: Kirigami.Theme.disabledTextColor
+296.             }
+297.             Item { Layout.fillWidth: true }
+298.             PC3.Label {
+299.                 text: "Bright"
+300.                 font.pointSize: Kirigami.Theme.smallFont.pointSize
+301.                 color: Kirigami.Theme.disabledTextColor
+302.             }
+303.         }
+304.     }
+305.
+306.     // Brightness range slider
+307.     ColumnLayout {
+308.         Layout.fillWidth: true
+309.         spacing: 2
+310.
+311.         RowLayout {
+312.             Layout.fillWidth: true
+313.
+314.             PC3.Label {
+315.                 text: "Brightness range"
+316.                 font.bold: true
+317.                 Layout.fillWidth: true
+318.             }
+319.
+320.             PC3.Label {
+321.                 text: "%1% – %2%".arg(Math.round(rangeSlider.first.value)).arg(Math.round(rangeSlider.second.value))
+322.                 font.pointSize: Kirigami.Theme.smallFont.pointSize
+323.                 font.family: "monospace"
+324.             }
+325.         }
+326.
+327.         QQC2.RangeSlider {
+328.             id: rangeSlider
+329.             Layout.fillWidth: true
+330.             implicitHeight: Kirigami.Units.gridUnit * 1.5
+331.             from: 1; to: 100; stepSize: 1
+332.
+333.             Component.onCompleted: setValues(plasmoid.configuration.minBrightness,
+334.                                              plasmoid.configuration.maxBrightness)
+335.
+336.             Connections {
+337.                 target: plasmoid.configuration
+338.                 function onMinBrightnessChanged() {
+339.                     rangeSlider.setValues(plasmoid.configuration.minBrightness,
+340.                                          rangeSlider.second.value)
+341.                 }
+342.                 function onMaxBrightnessChanged() {
+343.                     rangeSlider.setValues(rangeSlider.first.value,
+344.                                          plasmoid.configuration.maxBrightness)
+345.                 }
+346.             }
+347.
+348.             first.onMoved:  plasmoid.configuration.minBrightness = Math.round(first.value)
+349.             second.onMoved: plasmoid.configuration.maxBrightness = Math.round(second.value)
+350.         }
+351.
+352.         RowLayout {
+353.             Layout.fillWidth: true
+354.             PC3.Label {
+355.                 text: "Min"
+356.                 font.pointSize: Kirigami.Theme.smallFont.pointSize
+357.                 color: Kirigami.Theme.disabledTextColor
+358.             }
+359.             Item { Layout.fillWidth: true }
+360.             PC3.Label {
+361.                 text: "Max"
+362.                 font.pointSize: Kirigami.Theme.smallFont.pointSize
+363.                 color: Kirigami.Theme.disabledTextColor
+364.             }
+365.         }
+366.     }
+367.
+368.     Kirigami.Separator { Layout.fillWidth: true }
+369.
+370.     // ── Section 3: Presets ──────────────────────────────────────────────────
+371.
+372.     RowLayout {
+373.         Layout.fillWidth: true
+374.         spacing: Kirigami.Units.smallSpacing
+375.
+376.         PC3.Label {
+377.             text: "Presets:"
+378.             font.bold: true
+379.         }
+380.
+381.         Item { Layout.fillWidth: true }
+382.
+383.         PC3.Button {
+384.             text: "Standard"
+385.             onClicked: {
+386.                 plasmoid.configuration.minBrightness = 5
+387.                 plasmoid.configuration.maxBrightness = 100
+388.                 plasmoid.configuration.userBias = 50
+389.             }
+390.         }
+391.
+392.         PC3.Button {
+393.             text: "OLED safe"
+394.             onClicked: {
+395.                 plasmoid.configuration.minBrightness = 40
+396.                 plasmoid.configuration.maxBrightness = 80
+397.                 plasmoid.configuration.userBias = 50
+398.             }
+399.         }
+400.
+401.         PC3.Button {
+402.             text: "Night"
+403.             onClicked: {
+404.                 plasmoid.configuration.minBrightness = 1
+405.                 plasmoid.configuration.maxBrightness = 30
+406.                 plasmoid.configuration.userBias = 50
+407.             }
+408.         }
+409.     }
+410. }
+411.
+```
+
+</details>
+
+
+---
+
+<sub>⏱️ 1170m 12s</sub>
+
+### 💭 Reasoning
+
+*Now I have a clear picture. Let me implement the changes:
+
+1. **main.xml**: add `externalEnabled`, `externalBias`, `externalDisplayNum`
+2. **main.qml**:
+   - `_tToPercent(t, bias?)` - add optional bias param
+   - `externalTargetPercent` readonly property
+   - `PlasmaCore.DataSource` for executable
+   - `_applyExternal(percent)` function
+   - Update `applyLux` and `forceApply`
+   - Add `forceApplyExternal()`
+   - Set up signal connections for `externalBiasChanged` and `externalEnabledChanged`
+3. **FullRepresentation.qml**: add external bias slider below internal bias
+4. **configGeneral.qml**: add external display settings
+
+For the Canvas visualization, I'll keep the internal bias slider labeled as "Internal" and add a separate "External (DDC/CI)" slider with a toggle to enable it. The curve chart can display just the internal curve for now, keeping the UI clean and focused.
+
+The external display will use the same lux-to-temperature mapping as the internal one, but apply its own bias adjustment in the temperature-to-percent conversion step. For the DDC/CI command, since VCP 0x10 expects a 0-100 percentage value and `externalTargetPercent` is already in that range, I'll pass it directly after clamping to ensure it stays within bounds.
+
+Setting up the executable data source for Plasma 5...
+
+Implementing the external apply function...
+
+I should add hysteresis tracking for external commands too with a `lastSetExternal` variable to avoid redundant updates. For the canvas visualization, I'm thinking about whether to show both the internal and external positions—maybe as two dots in different colors to represent where each display is currently set, especially since they might have different bias values applied.
+
+The curve itself represents the internal display's brightness mapping, so I'll keep that as the main visualization and just add a second dot showing where the external display sits on that same scale. Now I'm ready to implement this across the config file and main QML, starting with adding the new configuration entries and then updating the logic to handle the external display position tracking. I need to see the next thinking to rewrite it. Could you provide the next thinking chunk that follows the current rewritten thinking about the code changes?*
+
+---
+
+<sub>⏱️ 1170m 34s</sub>
+
+### 💬 Copilot
+
+好，设计很清楚：共享 lux 曲线（`_luxToT`），每块显示器独立 bias（`_tToPercent(t, bias)`）。开工：
+
+---
+
+<sub>⏱️ 1170m 36s</sub>
+
+### ✅ `view`
+
+**view the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/configGeneral.qml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/configGeneral.qml
+
+<details>
+<summary>44 lines</summary>
+
+```
+1. import QtQuick 2.15
+2. import QtQuick.Layouts 1.15
+3. import QtQuick.Controls 2.15 as QQC2
+4. import org.kde.plasma.components 3.0 as PC3
+5. import org.kde.kirigami 2.20 as Kirigami
+6.
+7. Kirigami.FormLayout {
+8.     id: page
+9.
+10.     property alias cfg_luxMin:    luxMinField.value
+11.     property alias cfg_luxMax:    luxMaxField.value
+12.     property alias cfg_smoothing: smoothSlider.value
+13.
+14.     Kirigami.Separator { Kirigami.FormData.isSection: true; Kirigami.FormData.label: "Lux curve" }
+15.
+16.     RowLayout {
+17.         Kirigami.FormData.label: "Dark threshold:"
+18.         spacing: Kirigami.Units.smallSpacing
+19.         QQC2.SpinBox { id: luxMinField; from: 1; to: 500; stepSize: 1 }
+20.         PC3.Label { text: "lux" }
+21.     }
+22.
+23.     RowLayout {
+24.         Kirigami.FormData.label: "Bright threshold:"
+25.         spacing: Kirigami.Units.smallSpacing
+26.         QQC2.SpinBox { id: luxMaxField; from: 100; to: 50000; stepSize: 100 }
+27.         PC3.Label { text: "lux" }
+28.     }
+29.
+30.     Kirigami.Separator { Kirigami.FormData.isSection: true; Kirigami.FormData.label: "Responsiveness" }
+31.
+32.     RowLayout {
+33.         Kirigami.FormData.label: "Smoothing:"
+34.         spacing: Kirigami.Units.smallSpacing
+35.         PC3.Label { text: "Slow" }
+36.         QQC2.Slider {
+37.             id: smoothSlider
+38.             from: 5; to: 50; stepSize: 1
+39.             Layout.preferredWidth: Kirigami.Units.gridUnit * 10
+40.         }
+41.         PC3.Label { text: "Fast" }
+42.     }
+43. }
+44.
+```
+
+</details>
+
+
+---
+
+<sub>⏱️ 1170m 46s</sub>
+
+### 💬 Copilot
+
+**Step 1: main.xml** — add 3 new config entries:
+
+---
+
+<sub>⏱️ 1170m 50s</sub>
+
+### ✅ `edit`
+
+**edit the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/config/main.xml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/config/main.xml
+
+```
+File /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/config/main.xml updated with changes.
+```
+
+
+---
+
+<sub>⏱️ 1170m 55s</sub>
+
+### 💬 Copilot
+
+**Step 2: main.qml** — add external support:
+
+---
+
+<sub>⏱️ 1171m 2s</sub>
+
+### ✅ `edit`
+
+**edit the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml
+
+```
+File /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml updated with changes.
+```
+
+
+---
+
+<sub>⏱️ 1171m 8s</sub>
+
+### ✅ `edit`
+
+**edit the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml
+
+```
+File /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml updated with changes.
+```
+
+
+---
+
+<sub>⏱️ 1171m 11s</sub>
+
+### 💬 Copilot
+
+Now add the Executable DataSource after the EMA timer, and update the brightness functions:
+
+---
+
+<sub>⏱️ 1171m 17s</sub>
+
+### ✅ `edit`
+
+**edit the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml
+
+```
+File /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml updated with changes.
+```
+
+
+---
+
+<sub>⏱️ 1171m 19s</sub>
+
+### 💬 Copilot
+
+Now update `_tToPercent` to accept an optional bias, and add `_applyExternal` + `forceApplyExternal`:
+
+---
+
+<sub>⏱️ 1171m 28s</sub>
+
+### ✅ `edit`
+
+**edit the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml
+
+```
+File /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml updated with changes.
+```
+
+
+---
+
+<sub>⏱️ 1171m 31s</sub>
+
+### 💬 Copilot
+
+Now add `_applyExternal` and `forceApplyExternal` after `_applyRaw`:
+
+---
+
+<sub>⏱️ 1171m 38s</sub>
+
+### ✅ `edit`
+
+**edit the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml
+
+```
+File /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml updated with changes.
+```
+
+
+---
+
+<sub>⏱️ 1171m 41s</sub>
+
+### 💬 Copilot
+
+Now update `forceApply` and `applyLux` to call external, and add `forceApplyExternal`:
+
+---
+
+<sub>⏱️ 1171m 52s</sub>
+
+### ✅ `edit`
+
+**edit the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml
+
+```
+File /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/main.qml updated with changes.
+```
+
+
+---
+
+<sub>⏱️ 1171m 55s</sub>
+
+### 💬 Copilot
+
+**Step 3: FullRepresentation.qml** — add external bias slider:
+
+---
+
+<sub>⏱️ 1172m 8s</sub>
+
+### ✅ `edit`
+
+**edit the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/FullRepresentation.qml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/FullRepresentation.qml
+
+```
+File /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/FullRepresentation.qml updated with changes.
+```
+
+
+---
+
+<sub>⏱️ 1172m 11s</sub>
+
+### 💬 Copilot
+
+**Step 4: configGeneral.qml** — add external display settings:
+
+---
+
+<sub>⏱️ 1172m 23s</sub>
+
+### ✅ `edit`
+
+**edit the file at /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/configGeneral.qml.**
+
+/mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/configGeneral.qml
+
+```
+File /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness/contents/ui/configGeneral.qml updated with changes.
+```
+
+
+---
+
+<sub>⏱️ 1172m 27s</sub>
+
+### ✅ `bash`
+
+**Install**
+
+$ cd /mnt/zpool/Workspace/LocalPool/PlasmaAutoBrightness && bash install.sh 2>&1 | tail -3
+
+```
+Test now:  plasmawindowed org.kde.plasma.autobrightness
+Permanent: kquitapp5 plasmashell && kstart5 plasmashell
+<exited with exit code 0>
+```
+
+
+---
+
+<sub>⏱️ 1172m 30s</sub>
+
+### 💬 Copilot
+
+Done. 总结变更：
+
+| 文件 | 变更 |
+|------|------|
+| `main.xml` | +3 配置项：`externalEnabled`, `externalBias`, `externalDisplayNum` |
+| `main.qml` | `_tToPercent(t, bias?)` 加可选 bias 参数；`externalTargetPercent` 属性；`PlasmaCore.DataSource(executable)` + `_applyExternal()`；`forceApplyExternal()`；`applyLux`/`forceApply` 同步调外屏 |
+| `FullRepresentation.qml` | 外屏 bias 滑块（`externalEnabled` 时显示），内屏标签自适应 |
+| `configGeneral.qml` | External display 设置区：enable 开关 + 显示器编号 |
+
+启用方式：进组件设置 → 勾选 **Control external monitor** → Display number 填 `1`（你的 AOC U2777B）。
+
+---
+
 <sub>Generated by [GitHub Copilot CLI](https://github.com/features/copilot/cli)</sub>

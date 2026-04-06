@@ -7,9 +7,11 @@ import org.kde.kirigami 2.20 as Kirigami
 Kirigami.FormLayout {
     id: page
 
-    property alias cfg_luxMin:    luxMinField.value
-    property alias cfg_luxMax:    luxMaxField.value
-    property alias cfg_smoothing: smoothSlider.value
+    property alias cfg_luxMin:           luxMinField.value
+    property alias cfg_luxMax:           luxMaxField.value
+    property alias cfg_smoothing:        smoothSlider.value
+    property alias cfg_externalEnabled:  externalEnabledCheck.checked
+    property alias cfg_externalDisplayNum: externalDisplayField.value
 
     Kirigami.Separator { Kirigami.FormData.isSection: true; Kirigami.FormData.label: "Lux curve" }
 
@@ -39,5 +41,25 @@ Kirigami.FormLayout {
             Layout.preferredWidth: Kirigami.Units.gridUnit * 10
         }
         PC3.Label { text: "Fast" }
+    }
+
+    Kirigami.Separator { Kirigami.FormData.isSection: true; Kirigami.FormData.label: "External display (DDC/CI)" }
+
+    QQC2.CheckBox {
+        id: externalEnabledCheck
+        Kirigami.FormData.label: "Control external monitor:"
+        text: "Enable (requires ddcutil)"
+    }
+
+    RowLayout {
+        Kirigami.FormData.label: "Display number:"
+        spacing: Kirigami.Units.smallSpacing
+        enabled: externalEnabledCheck.checked
+        QQC2.SpinBox { id: externalDisplayField; from: 1; to: 8; stepSize: 1 }
+        PC3.Label {
+            text: "  (run 'ddcutil detect' to find)"
+            color: Kirigami.Theme.disabledTextColor
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
+        }
     }
 }

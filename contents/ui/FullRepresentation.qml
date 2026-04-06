@@ -254,7 +254,7 @@ ColumnLayout {
 
     // ── Section 2: Controls ─────────────────────────────────────────────────
 
-    // Bias slider
+    // Internal display bias slider
     ColumnLayout {
         Layout.fillWidth: true
         spacing: 2
@@ -263,7 +263,8 @@ ColumnLayout {
             Layout.fillWidth: true
 
             PC3.Label {
-                text: "Brightness bias"
+                text: plasmoid.configuration.externalEnabled
+                    ? "Internal bias" : "Brightness bias"
                 font.bold: true
                 Layout.fillWidth: true
             }
@@ -285,6 +286,56 @@ ColumnLayout {
             from: 0; to: 100; stepSize: 1
             value: plasmoid.configuration.userBias
             onMoved: plasmoid.configuration.userBias = Math.round(value)
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            PC3.Label {
+                text: "Dim"
+                font.pointSize: Kirigami.Theme.smallFont.pointSize
+                color: Kirigami.Theme.disabledTextColor
+            }
+            Item { Layout.fillWidth: true }
+            PC3.Label {
+                text: "Bright"
+                font.pointSize: Kirigami.Theme.smallFont.pointSize
+                color: Kirigami.Theme.disabledTextColor
+            }
+        }
+    }
+
+    // External display bias slider (visible only when external DDC/CI is enabled)
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: 2
+        visible: plasmoid.configuration.externalEnabled
+
+        RowLayout {
+            Layout.fillWidth: true
+
+            PC3.Label {
+                text: "External bias"
+                font.bold: true
+                Layout.fillWidth: true
+            }
+
+            PC3.Label {
+                text: plasmoid.configuration.externalBias === 50
+                    ? "Neutral"
+                    : (plasmoid.configuration.externalBias > 50 ? "+" : "") +
+                      (plasmoid.configuration.externalBias - 50) + "%"
+                font.pointSize: Kirigami.Theme.smallFont.pointSize
+                font.family: "monospace"
+            }
+        }
+
+        QQC2.Slider {
+            id: externalBiasSlider
+            Layout.fillWidth: true
+            implicitHeight: Kirigami.Units.gridUnit * 1.5
+            from: 0; to: 100; stepSize: 1
+            value: plasmoid.configuration.externalBias
+            onMoved: plasmoid.configuration.externalBias = Math.round(value)
         }
 
         RowLayout {

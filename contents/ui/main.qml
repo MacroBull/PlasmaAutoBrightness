@@ -22,11 +22,16 @@ Item {
     readonly property real luxLogPos: (plasmoid.configuration && emaLux > 0)
         ? _luxToT(emaLux) : 0
 
-    // Target brightness [%] from EMA lux; falls back to current if sensor not ready.
+    // Target brightness [%] for internal display; falls back to current if sensor not ready.
     // Uses cached luxLogPos to avoid recomputing _luxToT(emaLux).
     readonly property real targetPercent: emaLux > 0
         ? _tToPercent(luxLogPos)
         : (maxRaw > 0 ? currentBrightness / maxRaw * 100 : 0)
+
+    // Target brightness [%] for external DDC/CI display (independent bias).
+    readonly property real externalTargetPercent: emaLux > 0
+        ? _tToPercent(luxLogPos, plasmoid.configuration ? plasmoid.configuration.externalBias : 50)
+        : 0
 
     readonly property real alpha /* [ratio] */: plasmoid.configuration
         ? plasmoid.configuration.smoothing / 100.0 : 0.15
@@ -38,6 +43,8 @@ Item {
         function onUserBiasChanged()      { root.forceApply() }
         function onMinBrightnessChanged() { root.forceApply() }
         function onMaxBrightnessChanged() { root.forceApply() }
+        function onExternalBiasChanged()    { root.forceApplyExternal() }
+        function onExternalEnabledChanged() { root.forceApplyExternal() }
     }
 
     // ── Plasmoid metadata ───────────────────────────────────────────────────
@@ -104,6 +111,17 @@ Item {
         onTriggered: { if (root.currentLux > 0) root.applyLux(root.currentLux) }
     }
 
+    // ── DDC/CI external display ─────────────────────────────────────────────
+    // Fire-and-forget shell executor for ddcutil commands.
+    PlasmaCore.DataSource {
+        id: execSource
+        engine: "executable"
+        connectedSources: []
+        onNewData: disconnectSource(sourceName)
+    }
+
+    property int lastSetExternal: -1   // [0..100] last value sent to DDC/CI
+
     // ── Brightness curve ────────────────────────────────────────────────────
 
     // Private: log10-normalised position of lux within [luxMin, luxMax].
@@ -128,15 +146,16 @@ Item {
     //   userBias < 50  →  γ > 1  →  dimmer overall
 
     // Second stage: gamma remap + range scale. Input is the normalised log-position t.
-    function _tToPercent(t /* [ratio 0..1] */) /* [%] */ {
+    // bias [%abs 0..100] defaults to cfg.userBias when not provided.
+    function _tToPercent(t /* [ratio 0..1] */, bias /* [%abs 0..100, optional] */) /* [%] */ {
         const cfg    = plasmoid.configuration
         const range  /* [%] */ = cfg.maxBrightness - cfg.minBrightness
         if (range <= 0) return cfg.minBrightness
 
         // userBias [%abs 0..100] → midpoint anchor [ratio 0..1]
         // Anchored on absolute 0-100 scale: userBias=50 is always γ=1.
-        const normAnchor /* [ratio 0..1] */ = Math.max(0.001, Math.min(0.999,
-                                                  cfg.userBias / 100))
+        const b          /* [%abs] */       = (bias !== undefined) ? bias : cfg.userBias
+        const normAnchor /* [ratio 0..1] */ = Math.max(0.001, Math.min(0.999, b / 100))
         const gamma    /* [dimensionless] */ = Math.log(normAnchor) / Math.log(0.5)
         const remapped /* [ratio 0..1] */    = Math.pow(t, gamma)
 
@@ -160,12 +179,29 @@ Item {
         currentBrightness = targetRaw   // [raw]
     }
 
+    // External: send a brightness value [0..100] to DDC/CI display via ddcutil.
+    function _applyExternal(percent /* [% 0..100] */) {
+        if (!plasmoid.configuration || !plasmoid.configuration.externalEnabled) return
+        const v /* [0..100] */ = Math.max(0, Math.min(100, Math.round(percent)))
+        if (lastSetExternal >= 0 && Math.abs(v - lastSetExternal) < 1) return
+        const displayNum = plasmoid.configuration.externalDisplayNum
+        execSource.connectSource(
+            "ddcutil --display " + displayNum + " setvcp 10 " + v + " --noverify")
+        lastSetExternal = v
+    }
+
     function forceApply() {
         if (!plasmoid.configuration.enabled) return
         if (currentLux > 0) emaLux = currentLux   // snap EMA [lux] to current sensor reading
         if (emaLux <= 0) return
         // luxLogPos is up-to-date after emaLux snap; use cached t to avoid double _luxToT
         _applyRaw(Math.round(_tToPercent(luxLogPos /* [ratio] */) /* [%] */ / 100 * maxRaw /* [raw] */))
+        _applyExternal(externalTargetPercent)
+    }
+
+    // forceApply for external only (bias changed, no need to re-snap EMA).
+    function forceApplyExternal() {
+        if (emaLux > 0) _applyExternal(externalTargetPercent)
     }
 
     // Called on every sensor reading: EMA smoothing + hysteresis gate.
@@ -181,5 +217,6 @@ Item {
         if (lastSetRaw >= 0 && Math.abs(targetRaw - lastSetRaw) < threshold) return
 
         _applyRaw(targetRaw)
+        _applyExternal(externalTargetPercent)
     }
 }
