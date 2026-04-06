@@ -14,13 +14,22 @@ Item {
     property bool sensorAvailable: false
 
     // ── Internal smoothing state ────────────────────────────────────────────
-    property real emaLux: -1             // -1 = not yet initialised
-    property int  lastSetRaw: -1
-    property bool ignoreBrightnessChange: false  // gate: true while we're mid-write
+    property real emaLux: -1             // [lux]  -1 = not yet initialised
+    property int  lastSetRaw: -1         // [raw]
 
-    readonly property real alpha: plasmoid.configuration
-                                      ? plasmoid.configuration.smoothing / 100.0
-                                      : 0.15
+    // log10-normalised position of emaLux within [luxMin, luxMax] [ratio 0..1].
+    // This is the same as the intermediate `t` inside luxToPercent(emaLux).
+    readonly property real luxLogPos: (plasmoid.configuration && emaLux > 0)
+        ? _luxToT(emaLux) : 0
+
+    // Target brightness [%] from EMA lux; falls back to current if sensor not ready.
+    // Uses cached luxLogPos to avoid recomputing _luxToT(emaLux).
+    readonly property real targetPercent: emaLux > 0
+        ? _tToPercent(luxLogPos)
+        : (maxRaw > 0 ? currentBrightness / maxRaw * 100 : 0)
+
+    readonly property real alpha /* [ratio] */: plasmoid.configuration
+        ? plasmoid.configuration.smoothing / 100.0 : 0.15
 
     // Immediately re-apply when bias or brightness bounds change,
     // bypassing EMA hysteresis so the slider feels responsive.
@@ -70,14 +79,6 @@ Item {
         }
     }
 
-    // Brief suppression window after we call setBrightness to avoid
-    // treating our own write as a manual user change.
-    Timer {
-        id: suppressTimer
-        interval: 1200
-        onTriggered: root.ignoreBrightnessChange = false
-    }
-
     // ── Ambient light sensor ────────────────────────────────────────────────
     LightSensor {
         id: lightSensor
@@ -86,93 +87,99 @@ Item {
 
         onActiveChanged: { if (!active) root.emaLux = -1 }
 
+        // Only capture the latest lux value; EMA is driven by emaTimer below.
         onReadingChanged: {
             root.sensorAvailable = true
-            const lux = reading.illuminance
-            root.currentLux = lux
-            root.applyLux(lux)
+            root.currentLux = reading.illuminance  // [lux]
         }
+    }
+
+    // EMA timer: ticks at 0.4 Hz, deterministic frequency regardless of whether
+    // the sensor value changed (onReadingChanged only fires on value change).
+    Timer {
+        id: emaTimer
+        interval: 2500
+        repeat: true
+        running: lightSensor.active && root.sensorAvailable
+        onTriggered: { if (root.currentLux > 0) root.applyLux(root.currentLux) }
     }
 
     // ── Brightness curve ────────────────────────────────────────────────────
 
-    // Pure log-scale curve, no anchor applied.
-    function baseCurve(lux) {
+    // Private: log10-normalised position of lux within [luxMin, luxMax].
+    // Returns t [ratio 0..1] — clamped, so out-of-range lux maps to 0 or 1.
+    function _luxToT(lux /* [lux] */) /* [ratio 0..1] */ {
         const cfg  = plasmoid.configuration
-        const logA = Math.log10(Math.max(1, cfg.luxMin))
-        const logB = Math.log10(Math.max(logA + 0.1, cfg.luxMax))
-        const t    = Math.max(0, Math.min(1,
-                         (Math.log10(Math.max(1, lux)) - logA) / (logB - logA)))
-        return cfg.minBrightness + t * (cfg.maxBrightness - cfg.minBrightness)
+        const logA /* [log10(lux)] */ = Math.log10(Math.max(1, cfg.luxMin))
+        const logB /* [log10(lux)] */ = Math.max(logA + 0.1,
+                                            Math.log10(Math.max(1, cfg.luxMax)))
+        return Math.max(0, Math.min(1, (Math.log10(Math.max(1, lux)) - logA) / (logB - logA)))
     }
 
-    // Curve with gamma bias remapping applied.
-    // Maps auto-curve output through a power function so that:
-    //   f(0%)   = 0%   (always)
-    //   f(50%)  = userBias%  (user's midpoint preference)
-    //   f(100%) = 100%  (always)
-    // userBias=50 → identity (γ=1, no change)
-    // userBias>50 → γ<1, brighter overall
-    // userBias<50 → γ>1, dimmer overall
-    function luxToPercent(lux) {
-        const cfg    = plasmoid.configuration
-        const logA   = Math.log10(Math.max(1, cfg.luxMin))
-        const logB   = Math.log10(Math.max(logA + 0.1, cfg.luxMax))
-        const t      = Math.max(0, Math.min(1,
-                           (Math.log10(Math.max(1, lux)) - logA) / (logB - logA)))
-        const auto   = cfg.minBrightness + t * (cfg.maxBrightness - cfg.minBrightness)
+    // Maps ambient lux to target brightness [%] with gamma bias remap.
+    //
+    // Because the linear curve normalises to t (normAuto === t), the full
+    // pipeline simplifies to a single power function applied to t:
+    //   output = minBr + t^γ × (maxBr − minBr)
+    //
+    // Gamma semantics:
+    //   userBias = 50  →  γ = 1  →  identity (neutral), always
+    //   userBias > 50  →  γ < 1  →  brighter overall
+    //   userBias < 50  →  γ > 1  →  dimmer overall
 
-        // Normalise to 0..1 within [minBr, maxBr] for gamma remap
-        const range  = cfg.maxBrightness - cfg.minBrightness
+    // Second stage: gamma remap + range scale. Input is the normalised log-position t.
+    function _tToPercent(t /* [ratio 0..1] */) /* [%] */ {
+        const cfg    = plasmoid.configuration
+        const range  /* [%] */ = cfg.maxBrightness - cfg.minBrightness
         if (range <= 0) return cfg.minBrightness
 
-        const normAuto   = (auto - cfg.minBrightness) / range          // 0..1
-        const normAnchor = Math.max(0.001, Math.min(0.999,
-                               (cfg.userBias - cfg.minBrightness) / range)  )
-        const gamma      = Math.log(normAnchor) / Math.log(0.5)        // γ = log(anchor)/log(0.5)
-        const remapped   = Math.pow(Math.max(0, Math.min(1, normAuto)), gamma)
+        // userBias [%abs 0..100] → midpoint anchor [ratio 0..1]
+        // Anchored on absolute 0-100 scale: userBias=50 is always γ=1.
+        const normAnchor /* [ratio 0..1] */ = Math.max(0.001, Math.min(0.999,
+                                                  cfg.userBias / 100))
+        const gamma    /* [dimensionless] */ = Math.log(normAnchor) / Math.log(0.5)
+        const remapped /* [ratio 0..1] */    = Math.pow(t, gamma)
 
-        return cfg.minBrightness + remapped * range
+        return cfg.minBrightness /* [%] */ + remapped * range /* [%] */
     }
 
-    // Force an immediate brightness update, ignoring hysteresis.
-    // Used when config parameters change (bias, min/max bounds).
-    function forceApply() {
-        if (!plasmoid.configuration.enabled || emaLux <= 0) return
-        const targetRaw = Math.round(luxToPercent(emaLux) / 100 * maxRaw)
-        const service   = pmSource.serviceForSource("PowerDevil")
-        if (!service) return
-        const op      = service.operationDescription("setBrightness")
-        op.brightness = targetRaw
-        op.silent     = true
-        ignoreBrightnessChange = true
-        service.startOperationCall(op)
-        suppressTimer.restart()
-        lastSetRaw        = targetRaw
-        currentBrightness = targetRaw
+    // Full pipeline: lux → t → brightness [%]. Convenience wrapper.
+    function luxToPercent(lux /* [lux] */) /* [%] */ {
+        return _tToPercent(_luxToT(lux))
     }
 
-    // EMA smoothing + hysteresis gate
-    function applyLux(rawLux) {
-        if (!plasmoid.configuration.enabled) return
-
-        emaLux = (emaLux < 0) ? rawLux : (alpha * rawLux + (1 - alpha) * emaLux)
-
-        const targetRaw   = Math.round(luxToPercent(emaLux) / 100 * maxRaw)
-        const threshold   = Math.max(1, Math.round(0.01 * maxRaw))
-        if (lastSetRaw >= 0 && Math.abs(targetRaw - lastSetRaw) < threshold) return
-
+    // Internal: send a raw brightness value to PowerDevil and record it.
+    function _applyRaw(targetRaw /* [raw 0..maxRaw] */) {
         const service = pmSource.serviceForSource("PowerDevil")
         if (!service) return
         const op      = service.operationDescription("setBrightness")
-        op.brightness = targetRaw
+        op.brightness = targetRaw   // [raw]
         op.silent     = true
-
-        ignoreBrightnessChange = true
         service.startOperationCall(op)
-        suppressTimer.restart()
+        lastSetRaw        = targetRaw   // [raw]
+        currentBrightness = targetRaw   // [raw]
+    }
 
-        lastSetRaw        = targetRaw
-        currentBrightness = targetRaw
+    function forceApply() {
+        if (!plasmoid.configuration.enabled) return
+        if (currentLux > 0) emaLux = currentLux   // snap EMA [lux] to current sensor reading
+        if (emaLux <= 0) return
+        // luxLogPos is up-to-date after emaLux snap; use cached t to avoid double _luxToT
+        _applyRaw(Math.round(_tToPercent(luxLogPos /* [ratio] */) /* [%] */ / 100 * maxRaw /* [raw] */))
+    }
+
+    // Called on every sensor reading: EMA smoothing + hysteresis gate.
+    function applyLux(rawLux /* [lux] */) {
+        if (!plasmoid.configuration.enabled) return
+
+        // Exponential moving average
+        emaLux /* [lux] */ = (emaLux < 0) ? rawLux : (alpha * rawLux + (1 - alpha) * emaLux)
+
+        // luxLogPos updates reactively from emaLux; use it to avoid recomputing _luxToT
+        const targetRaw /* [raw] */ = Math.round(_tToPercent(luxLogPos) / 100 * maxRaw)
+        const threshold /* [raw] */ = Math.max(1, Math.round(0.01 * maxRaw))
+        if (lastSetRaw >= 0 && Math.abs(targetRaw - lastSetRaw) < threshold) return
+
+        _applyRaw(targetRaw)
     }
 }

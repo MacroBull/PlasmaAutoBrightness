@@ -1,6 +1,6 @@
 {
     "KPlugin": {
-        "Authors": [{"Email": "", "Name": "PlasmaAutoBrightness"}],
+        "Authors": [{"Email": "MacroBull.Github@Gmail.com", "Name": "MacroBull"}],
         "Category": "System Information",
         "Description": "Automatic screen brightness using ambient light sensor",
         "Icon": "video-display-brightness",

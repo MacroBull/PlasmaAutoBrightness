@@ -1,0 +1,7 @@
+# QML bytecode cache
+*.qmlc
+contents/ui/*.qmlc
+
+# Session / dev notes
+requests.md
+session.md
