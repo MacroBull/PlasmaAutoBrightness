@@ -4,6 +4,8 @@ A system-tray plasmoid for **KDE Plasma 5** that automatically adjusts screen br
 
 > **Plasma 6.6+** ships native ALS auto-brightness. This plasmoid targets **Plasma 5.24 – 5.27** on systems where the hardware is ready but the desktop isn't.
 
+![Auto Brightness plasmoid popup](assets/screenshot.png)
+
 ---
 
 ## Features
