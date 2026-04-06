@@ -1,3 +1,4 @@
 # QML bytecode cache
 *.qmlc
 contents/ui/*.qmlc
+dist/

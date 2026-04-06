@@ -53,6 +53,12 @@ cd PlasmaAutoBrightness
 bash install.sh
 ```
 
+Create a distributable plasmoid package:
+
+```bash
+bash install.sh package
+```
+
 Then add the **Auto Brightness** widget to your system tray via *Right-click panel → Add Widgets*.
 
 To test without touching your panel:

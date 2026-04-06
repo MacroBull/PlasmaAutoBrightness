@@ -5,6 +5,7 @@ set -euo pipefail
 PLUGIN_ID="org.kde.plasma.autobrightness"
 INSTALL_DIR="$HOME/.local/share/plasma/plasmoids/$PLUGIN_ID"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LICENSE_FILE="$SCRIPT_DIR/LICENSE"
 
 case "${1:-install}" in
 install)
@@ -13,7 +14,8 @@ install)
     mkdir -p "$INSTALL_DIR"
     cp "$SCRIPT_DIR/metadata.json" "$INSTALL_DIR/"
     cp -r "$SCRIPT_DIR/contents"   "$INSTALL_DIR/"
-    find ~/.cache -name "*.qmlc" -delete 2>/dev/null || true
+    cp "$LICENSE_FILE" "$INSTALL_DIR/"
+    find "$HOME/.cache" -type f -name "*.qmlc" -delete 2>/dev/null || true
     echo "Files installed:"
     find "$INSTALL_DIR" -type f | sed "s|$INSTALL_DIR/|  |"
 
@@ -43,8 +45,21 @@ uninstall)
     rm -rf "$INSTALL_DIR"
     echo "Done."
     ;;
+package)
+    OUT_DIR="${2:-$SCRIPT_DIR/dist}"
+    PACKAGE_FILE="$OUT_DIR/${PLUGIN_ID}.plasmoid"
+
+    echo "Packaging $PLUGIN_ID …"
+    mkdir -p "$OUT_DIR"
+    rm -f "$PACKAGE_FILE"
+    (
+        cd "$SCRIPT_DIR"
+        zip -qr "$PACKAGE_FILE" metadata.json contents LICENSE README.md
+    )
+    echo "Package created: $PACKAGE_FILE"
+    ;;
 *)
-    echo "Usage: $0 [install|uninstall]"
+    echo "Usage: $0 [install|uninstall|package [output_dir]]"
     exit 1
     ;;
 esac
