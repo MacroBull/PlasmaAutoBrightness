@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <group name="General">
+    <!-- Whether auto brightness is active -->
+    <entry name="enabled" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- Minimum brightness % applied at luxMin and below -->
+    <entry name="minBrightness" type="Int">
+      <default>5</default>
+    </entry>
+    <!-- Maximum brightness % applied at luxMax and above -->
+    <entry name="maxBrightness" type="Int">
+      <default>100</default>
+    </entry>
+    <!-- Lux value mapped to minBrightness (log scale lower bound) -->
+    <entry name="luxMin" type="Double">
+      <default>5.0</default>
+    </entry>
+    <!-- Lux value mapped to maxBrightness (log scale upper bound) -->
+    <entry name="luxMax" type="Double">
+      <default>5000.0</default>
+    </entry>
+    <!-- EMA smoothing factor * 100 (5=slow, 50=fast) -->
+    <entry name="smoothing" type="Int">
+      <default>15</default>
+    </entry>
+    <!-- User bias: 0=lock-dim, 50=no-bias(auto), 100=lock-bright -->
+    <entry name="userBias" type="Int">
+      <default>50</default>
+    </entry>
+  </group>
+</kcfg>
